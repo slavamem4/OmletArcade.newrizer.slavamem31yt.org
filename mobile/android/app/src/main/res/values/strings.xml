@@ -5,7 +5,7 @@
       The backend this shell talks to. Point it at your Render service URL
       before building (the same origin that serves index.html).
     -->
-    <string name="server_url">https://omlet-arcade.onrender.com</string>
+    <string name="server_url">https://omletarcade-newrizer-slavamem31yt-org-1.onrender.com</string>
     <string name="offline_title">No connection</string>
     <string name="offline_body">The shell could not reach the server. Check the network and retry.</string>
     <string name="retry">Retry</string>
