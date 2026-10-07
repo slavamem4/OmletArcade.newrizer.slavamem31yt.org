@@ -53,7 +53,9 @@ function tableDefs() {
   const txt = t ? 'TEXT' : 'TEXT';
   const jsonCol = t ? 'JSONB' : 'TEXT';
   const boolCol = t ? 'BOOLEAN' : 'INTEGER';
-  const ts = 'INTEGER';
+  // Epoch milliseconds need 8 bytes: sqlite's INTEGER is 64-bit, but Postgres
+  // INTEGER overflows at 2^31, so pg must use BIGINT.
+  const ts = t ? 'BIGINT' : 'INTEGER';
 
   return [
     `CREATE TABLE IF NOT EXISTS users (
@@ -345,7 +347,13 @@ function createSqlite() {
 }
 
 function createPg() {
-  const { Pool } = require('pg');
+  const pg = require('pg');
+  // node-postgres returns BIGINT (int8) and NUMERIC as strings to avoid
+  // precision loss. Every id in this app fits in a double, and callers compare
+  // them with ===, so parse them back to numbers like SQLite does.
+  pg.types.setTypeParser(pg.types.builtins.INT8, (v) => (v === null ? null : parseInt(v, 10)));
+  pg.types.setTypeParser(pg.types.builtins.NUMERIC, (v) => (v === null ? null : parseFloat(v)));
+  const { Pool } = pg;
   const pool = new Pool({
     connectionString: config.db.url,
     max: config.db.poolMax,
@@ -410,11 +418,52 @@ async function insertReturning(table, columns, values) {
   return Number(info.insertId);
 }
 
+/**
+ * Deployments created before the BIGINT fix hold 4-byte integer timestamp
+ * columns. Widen them in place; CREATE TABLE IF NOT EXISTS alone would leave
+ * the old shape untouched. integer -> bigint needs no USING clause.
+ */
+const TS_MIGRATION = [
+  ['users', 'locked_until'], ['users', 'last_seen_at'], ['users', 'created_at'], ['users', 'updated_at'],
+  ['devices', 'created_at'],
+  ['sessions', 'revoked_at'], ['sessions', 'expires_at'], ['sessions', 'created_at'],
+  ['friendships', 'created_at'],
+  ['blocks', 'created_at'],
+  ['parties', 'created_at'], ['parties', 'updated_at'],
+  ['party_members', 'joined_at'],
+  ['party_invites', 'created_at'],
+  ['party_events', 'created_at'],
+  ['channels', 'created_at'],
+  ['messages', 'created_at'],
+  ['mc_servers', 'created_at'], ['mc_servers', 'updated_at'],
+  ['mc_sessions', 'joined_at'], ['mc_sessions', 'left_at'],
+  ['broadcasts', 'started_at'], ['broadcasts', 'ended_at'],
+  ['feed_items', 'created_at'],
+  ['notifications', 'read_at'], ['notifications', 'created_at'],
+  ['reports', 'created_at'],
+  ['bans', 'expires_at'], ['bans', 'created_at'],
+  ['wrapped_keys', 'created_at'],
+  ['key_packages', 'created_at'],
+  ['audit_log', 'created_at'],
+  ['purge_log', 'created_at'],
+];
+
+async function migratePgTimestamps() {
+  for (const [table, column] of TS_MIGRATION) {
+    try {
+      await impl.exec(`ALTER TABLE ${table} ALTER COLUMN ${column} TYPE BIGINT`);
+    } catch (err) {
+      require('./logger').warn('timestamp migration skipped', { table, column, message: err.message });
+    }
+  }
+}
+
 async function init() {
   impl = driverName === 'pg' ? createPg() : createSqlite();
   for (const statement of tableDefs()) {
     await impl.exec(statement);
   }
+  if (driverName === 'pg') await migratePgTimestamps();
   return impl;
 }
 
