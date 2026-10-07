@@ -5,7 +5,7 @@
   "description": "Backend for the Omlet Arcade functional clone: auth, parties, Minecraft hosting, broadcast, chat, LiveKit voice. Secrets live here and nowhere else.",
   "type": "commonjs",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=20.11 <21"
   },
   "main": "index.js",
   "scripts": {
@@ -14,7 +14,6 @@
     "test": "node test/run.js && node test/client.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
     "compression": "^1.7.5",
     "cookie-parser": "^1.4.7",
     "express": "^4.21.2",
@@ -24,5 +23,8 @@
     "livekit-server-sdk": "^2.19.1",
     "pg": "^8.13.1",
     "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.10.0"
   }
 }

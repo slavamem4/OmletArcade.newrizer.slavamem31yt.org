@@ -10,12 +10,18 @@ APK or the HTML/JS.
 2. **New → Web Service**, connect the repo (or upload `server/` + `web/` as-is).
    - **Root Directory:** the folder that contains `server/package.json` if the
      repo root is this project, otherwise leave empty and adjust the commands.
-   - **Runtime:** Node
+   - **Runtime:** Node (pinned to 20 via `server/.nvmrc` and the `engines`
+     range; Node 26 cannot compile `better-sqlite3`, and the app targets 20)
    - **Build Command:** `npm --prefix server ci`
    - **Start Command:** `npm --prefix server start`
    - **Health Check Path:** `/api/system/ready`
    - **Plan:** any; the anti-DDoS limits assume one instance (rate buckets are
      in-process). If you scale out, move buckets to Redis first.
+
+If a deploy log ever shows `node -v v26` again, set the env var
+`NODE_VERSION=20.19.5` on the service — it overrides autodetection.
+`better-sqlite3` is an *optional* dependency: on Render the server uses
+Postgres, so even a failed native build cannot fail `npm ci`.
 
 ## 2. Environment variables
 
