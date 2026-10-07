@@ -190,18 +190,20 @@
   }
 
   window.Screens = window.Screens || {};
+  // '#/auth' signs in, '#/auth/signup' registers: the router resolves the
+  // second segment as a sub-route of the auth screen.
   window.Screens.auth = {
-    paramNames: [],
     render: function (view, params, query, api) {
       api.setTitle([el('span', { html: icon('lock', 20) }), el('span', { text: 'Sign in' })]);
       signIn(view, api);
     },
-  };
-  window.Screens['auth/signup'] = {
-    paramNames: [],
-    render: function (view, params, query, api) {
-      api.setTitle([el('span', { html: icon('user-plus', 20) }), el('span', { text: 'Create account' })]);
-      signUp(view, api);
+    routes: {
+      signup: {
+        render: function (view, params, query, api) {
+          api.setTitle([el('span', { html: icon('user-plus', 20) }), el('span', { text: 'Create account' })]);
+          signUp(view, api);
+        },
+      },
     },
   };
   window.Screens.auth.recoverKeys = recoverKeys;

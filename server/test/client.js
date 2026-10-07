@@ -205,7 +205,7 @@ async function renderRoute(window, hash) {
     text: view.textContent || '',
     html: view.innerHTML || '',
     children: view.children.length,
-    errors: Array.from(view.querySelectorAll('.banner--error')).map((n) => n.textContent),
+    errors: Array.from(view.querySelectorAll('.banner--error')).filter((n) => !n.classList.contains('hidden')).map((n) => n.textContent),
   };
 }
 
@@ -231,6 +231,10 @@ test('every route renders content and no error banner', async () => {
     ['#/settings', 'Encryption key'],
     ['#/settings/sessions', 'Pixel 8'],
     ['#/streams', 'watching'],
+    ['#/auth', 'Sign in'],
+    // Regression: the signup link used to re-render the sign-in form because
+    // the screen was registered under a slash key the router never resolves.
+    ['#/auth/signup', 'Repeat password'],
   ];
   for (const [hash, expect] of routes) {
     const result = await renderRoute(window, hash);
