@@ -1,7 +1,0 @@
-// Single-module Android shell. The app itself lives in web/ and is served by
-// the backend; this shell provides the WebView, the WebRTC permissions and the
-// system Back mapping. No Kotlin, no androidx, no Capacitor: fewer moving
-// parts and a smaller APK.
-plugins {
-    id 'com.android.application' version '8.7.3' apply false
-}
