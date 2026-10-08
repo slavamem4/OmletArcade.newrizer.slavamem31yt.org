@@ -6,8 +6,9 @@
 2. **Не публикуйте архив.** В нём лежат `android/keystore/release.jks` и
    `android/config.properties` с паролями подписи. Потеря keystore означает, что
    обновления приложения нельзя будет подписать тем же ключом.
-3. **Service account Firebase** никогда не кладите в репозиторий: только
-   `FIREBASE_SERVICE_ACCOUNT_B64` в окружении Render.
+3. **Service account Firebase не нужен.** Сервер работает без него. Если ключ
+   успел создаться — удалите его: Google Cloud Console → IAM & Admin →
+   Service Accounts → Keys. Неиспользуемый ключ это только риск.
 4. Ограничьте Firebase API-ключ в Google Cloud Console: Application restrictions →
    Android apps → отпечаток SHA-256 вашего keystore.
 5. Перед публикацией в Play замените статический `APP_ATTEST_SECRET` на Firebase

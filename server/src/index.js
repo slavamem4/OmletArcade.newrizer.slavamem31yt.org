@@ -1,8 +1,15 @@
 // Arcade backend entry point.
+//
+// Scope on purpose: this service does exactly one privileged thing - it turns a
+// verified Firebase identity into a short lived LiveKit grant. It holds no
+// database credential, so a compromise of this host cannot read user data.
+//
 // Hardening summary:
-//   - no secret is ever sent to a client; LiveKit grants are short lived
+//   - no secret is ever sent to a client; LiveKit grants expire in 15 minutes
+//   - identity verified against Google's public keys, no service account
+//   - database reads are performed with the caller's own token, rules apply
 //   - every body is schema-validated and size-capped
-//   - rate limits per route class, keyed by authenticated uid when present
+//   - rate limits keyed by authenticated uid when present
 //   - CORS default-deny, helmet security headers, no stack traces in responses
 
 import compression from 'compression';
@@ -16,11 +23,7 @@ import pinoHttp from 'pino-http';
 import { config } from './config.js';
 import { appGate, requireUser } from './lib/auth.js';
 import { HttpError } from './lib/http.js';
-import { keysRouter } from './routes/keys.js';
-import { meRouter } from './routes/me.js';
-import { minecraftRouter } from './routes/minecraft.js';
 import { rtcRouter } from './routes/rtc.js';
-import { streamsRouter, voiceRouter } from './routes/streams.js';
 
 const logger = pino({
   level: config.env === 'production' ? 'info' : 'debug',
@@ -67,7 +70,7 @@ app.use(
       if (config.security.allowedOrigins.includes(origin)) return callback(null, true);
       return callback(new HttpError(403, 'forbidden', 'Origin not allowed'));
     },
-    methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+    methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'X-App-Check'],
     maxAge: 600,
   }),
@@ -93,14 +96,7 @@ app.get('/healthz', (_req, res) => {
 });
 
 app.use('/v1', limiter(config.limits.globalMax), appGate);
-
-const authed = [requireUser];
-app.use('/v1/me', authed, limiter(config.limits.writeMax), meRouter);
-app.use('/v1/streams', authed, limiter(config.limits.writeMax), streamsRouter);
-app.use('/v1/voice', authed, limiter(config.limits.writeMax), voiceRouter);
-app.use('/v1/minecraft', authed, limiter(config.limits.writeMax), minecraftRouter);
-app.use('/v1/keys', authed, limiter(config.limits.writeMax), keysRouter);
-app.use('/v1/rtc', authed, limiter(config.limits.tokenMax), rtcRouter);
+app.use('/v1/rtc', requireUser, limiter(config.limits.tokenMax), rtcRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: { code: 'not_found', message: 'No such endpoint' } });
@@ -108,6 +104,17 @@ app.use((_req, res) => {
 
 // Central error funnel: clients get a code and a safe message, never internals.
 app.use((error, req, res, _next) => {
+  // body-parser failures are client mistakes, not server faults.
+  if (error && !(error instanceof HttpError)) {
+    if (error.type === 'entity.too.large') {
+      error = new HttpError(413, 'payload_too_large', 'Request body is too large');
+    } else if (error.type === 'entity.parse.failed' || error instanceof SyntaxError) {
+      error = new HttpError(400, 'bad_request', 'Request body is not valid JSON');
+    } else if (error.type === 'encoding.unsupported' || error.type === 'charset.unsupported') {
+      error = new HttpError(415, 'unsupported_media_type', 'Unsupported body encoding');
+    }
+  }
+
   const status = error instanceof HttpError ? error.status : 500;
   if (status >= 500) {
     req.log?.error({ err: error }, 'unhandled error');

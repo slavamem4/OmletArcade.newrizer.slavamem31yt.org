@@ -5,7 +5,7 @@ services:
     plan: free
     region: frankfurt
     rootDir: server
-    buildCommand: npm ci --omit=dev
+    buildCommand: npm ci --omit=dev --omit=optional
     startCommand: npm start
     healthCheckPath: /healthz
     autoDeploy: true
@@ -27,8 +27,6 @@ services:
       - key: FIREBASE_PROJECT_ID
         sync: false
       - key: FIREBASE_DATABASE_URL
-        sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_B64
         sync: false
       - key: APP_ATTEST_SECRET
         sync: false

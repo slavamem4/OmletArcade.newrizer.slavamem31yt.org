@@ -1,5 +1,9 @@
 // Central configuration. Every secret is read from the process environment.
 // Nothing here is ever serialised to a client response.
+//
+// There is no Firebase service account: identity is verified against Google's
+// public signing keys, and privileged writes are enforced by database rules
+// instead of an admin credential.
 
 const required = (name) => {
   const value = process.env[name];
@@ -34,9 +38,7 @@ export const config = Object.freeze({
 
   firebase: Object.freeze({
     projectId: required('FIREBASE_PROJECT_ID'),
-    databaseUrl: required('FIREBASE_DATABASE_URL'),
-    // Base64 of the service-account JSON. Never logged, never returned.
-    serviceAccountB64: required('FIREBASE_SERVICE_ACCOUNT_B64'),
+    databaseUrl: required('FIREBASE_DATABASE_URL').replace(/\/+$/, ''),
   }),
 
   security: Object.freeze({
@@ -44,7 +46,7 @@ export const config = Object.freeze({
     allowedOrigins: parseList(optional('ALLOWED_ORIGINS', '')),
     // Optional hard gate for the public API, sent as X-App-Check.
     appCheckSecret: optional('APP_ATTEST_SECRET', ''),
-    maxBodyBytes: Number.parseInt(optional('MAX_BODY_BYTES', '65536'), 10),
+    maxBodyBytes: Number.parseInt(optional('MAX_BODY_BYTES', '16384'), 10),
     trustProxyHops: Number.parseInt(optional('TRUST_PROXY_HOPS', '1'), 10),
   }),
 
@@ -52,7 +54,6 @@ export const config = Object.freeze({
     windowMs: Number.parseInt(optional('RATE_WINDOW_MS', '60000'), 10),
     globalMax: Number.parseInt(optional('RATE_GLOBAL_MAX', '240'), 10),
     tokenMax: Number.parseInt(optional('RATE_TOKEN_MAX', '30'), 10),
-    writeMax: Number.parseInt(optional('RATE_WRITE_MAX', '60'), 10),
   }),
 });
 
@@ -64,4 +65,7 @@ if (!/^wss:\/\//i.test(config.livekit.url)) {
 }
 if (!/^https:\/\//i.test(config.firebase.databaseUrl)) {
   throw new Error('FIREBASE_DATABASE_URL must start with https://');
+}
+if (!/^[a-z0-9-]{4,40}$/.test(config.firebase.projectId)) {
+  throw new Error('FIREBASE_PROJECT_ID looks malformed');
 }

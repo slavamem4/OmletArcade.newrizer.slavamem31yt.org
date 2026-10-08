@@ -24,7 +24,6 @@ class ArcadeApplication : Application() {
                 .setProjectId(BuildConfig.FIREBASE_PROJECT_ID)
                 .setDatabaseUrl(BuildConfig.FIREBASE_DB_URL)
                 .setGcmSenderId(BuildConfig.FIREBASE_SENDER_ID)
-                .setStorageBucket(BuildConfig.FIREBASE_STORAGE_BUCKET)
                 .build()
             FirebaseApp.initializeApp(this, options)
         }

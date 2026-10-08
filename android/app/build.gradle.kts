@@ -40,7 +40,6 @@ android {
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${cfg("firebaseProjectId", "")}\"")
         buildConfigField("String", "FIREBASE_DB_URL", "\"${cfg("firebaseDbUrl", "")}\"")
         buildConfigField("String", "FIREBASE_SENDER_ID", "\"${cfg("firebaseSenderId", "")}\"")
-        buildConfigField("String", "FIREBASE_STORAGE_BUCKET", "\"${cfg("firebaseStorageBucket", "")}\"")
     }
 
     signingConfigs {

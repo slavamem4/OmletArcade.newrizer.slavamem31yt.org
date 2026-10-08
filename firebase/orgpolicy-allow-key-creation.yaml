@@ -1,0 +1,11 @@
+# Точечное исключение из политики "Disable service account key creation"
+# ТОЛЬКО для проекта omletarcade-790f7, вся остальная организация остаётся закрытой.
+#
+#   gcloud org-policies set-policy orgpolicy-allow-key-creation.yaml
+#
+# Нужна роль roles/orgpolicy.policyAdmin на уровне организации.
+name: projects/omletarcade-790f7/policies/iam.managed.disableServiceAccountKeyCreation
+spec:
+  inheritFromParent: false
+  rules:
+    - enforce: false

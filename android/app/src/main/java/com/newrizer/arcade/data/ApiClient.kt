@@ -5,8 +5,9 @@ import com.newrizer.arcade.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -20,8 +21,10 @@ class ApiException(val status: Int, val code: String, override val message: Stri
 
 /**
  * Thin HTTPS client for the Render backend.
- * Authentication is a Firebase ID token; the app holds no service credential
- * and never sees a LiveKit API key.
+ *
+ * The backend does one thing: it turns a Firebase identity into a short lived
+ * LiveKit grant. Everything else goes straight to Firebase under the database
+ * rules, so this surface stays two endpoints wide.
  */
 object ApiClient {
 
@@ -68,33 +71,15 @@ object ApiClient {
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (response.isSuccessful) return@use body
-            val code = runCatching {
-                json.parseToJsonElement(body)
-                    .let { it as? kotlinx.serialization.json.JsonObject }
-                    ?.get("error")
-                    ?.let { it as? kotlinx.serialization.json.JsonObject }
+            val error = runCatching {
+                (json.parseToJsonElement(body) as? JsonObject)?.get("error") as? JsonObject
             }.getOrNull()
-            val errorCode = code?.get("code")?.toString()?.trim('"') ?: "http_${response.code}"
-            val errorMessage = code?.get("message")?.toString()?.trim('"') ?: "Request failed"
-            throw ApiException(response.code, errorCode, errorMessage)
+            throw ApiException(
+                response.code,
+                error?.get("code")?.toString()?.trim('"') ?: "http_${response.code}",
+                error?.get("message")?.toString()?.trim('"') ?: "Request failed",
+            )
         }
-    }
-
-    private suspend fun builder(path: String): Request.Builder {
-        require(path.startsWith("/")) { "path must start with /" }
-        val request = Request.Builder()
-            .url(baseUrl + path)
-            .header("Authorization", "Bearer ${idToken()}")
-            .header("Accept", "application/json")
-        if (BuildConfig.APP_CHECK_TOKEN.isNotEmpty()) {
-            request.header("X-App-Check", BuildConfig.APP_CHECK_TOKEN)
-        }
-        return request
-    }
-
-    suspend fun <T> get(path: String, serializer: KSerializer<T>): T {
-        val response = execute(builder(path).get().build())
-        return json.decodeFromString(serializer, response)
     }
 
     suspend fun <B, T> post(
@@ -103,25 +88,16 @@ object ApiClient {
         bodySerializer: KSerializer<B>,
         serializer: KSerializer<T>,
     ): T {
+        require(path.startsWith("/")) { "path must start with /" }
         val payload = json.encodeToString(bodySerializer, body).toRequestBody(jsonMedia)
-        val response = execute(builder(path).post(payload).build())
-        return json.decodeFromString(serializer, response)
-    }
-
-    suspend fun <T> postEmpty(path: String, serializer: KSerializer<T>): T {
-        val payload = "{}".toRequestBody(jsonMedia)
-        val response = execute(builder(path).post(payload).build())
-        return json.decodeFromString(serializer, response)
-    }
-
-    suspend fun <B, T> put(
-        path: String,
-        body: B,
-        bodySerializer: KSerializer<B>,
-        serializer: KSerializer<T>,
-    ): T {
-        val payload = json.encodeToString(bodySerializer, body).toRequestBody(jsonMedia)
-        val response = execute(builder(path).put(payload).build())
-        return json.decodeFromString(serializer, response)
+        val builder = Request.Builder()
+            .url(baseUrl + path)
+            .header("Authorization", "Bearer ${idToken()}")
+            .header("Accept", "application/json")
+            .post(payload)
+        if (BuildConfig.APP_CHECK_TOKEN.isNotEmpty()) {
+            builder.header("X-App-Check", BuildConfig.APP_CHECK_TOKEN)
+        }
+        return json.decodeFromString(serializer, execute(builder.build()))
     }
 }
