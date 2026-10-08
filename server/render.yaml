@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: omletarcade-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: server
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=384
+      # All values below are secrets: set them in the Render dashboard,
+      # never in the repository.
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: LIVEKIT_TOKEN_TTL_SECONDS
+        value: "900"
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_DATABASE_URL
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_B64
+        sync: false
+      - key: APP_ATTEST_SECRET
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: ""

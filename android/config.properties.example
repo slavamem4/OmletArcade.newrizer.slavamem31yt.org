@@ -1,0 +1,22 @@
+# Client-side configuration. Nothing secret belongs here: anything shipped in
+# an APK is readable by anyone who downloads it.
+apiBaseUrl=https://omletarcade-newrizer-slavamem31yt-org-1.onrender.com
+
+# Firebase web/Android client config. These identifiers are public by design;
+# access is controlled by the Realtime Database rules, not by hiding them.
+firebaseApiKey=AIza...
+firebaseAppId=1:659141695366:android:0000000000000000000000
+firebaseProjectId=omletarcade-790f7
+firebaseDbUrl=https://omletarcade-790f7-default-rtdb.europe-west1.firebasedatabase.app
+firebaseSenderId=659141695366
+firebaseStorageBucket=omletarcade-790f7.firebasestorage.app
+
+# Low-value build marker sent as X-App-Check. It raises the cost of scripted
+# abuse; it is not an authentication factor.
+appCheckToken=
+
+# Release signing (keystore must stay outside version control).
+releaseStoreFile=keystore/release.jks
+releaseStorePassword=
+releaseKeyAlias=arcade
+releaseKeyPassword=

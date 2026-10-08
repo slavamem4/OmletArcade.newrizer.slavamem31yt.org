@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Arcade</string>
+    <string name="broadcast_channel_name">Live broadcast</string>
+    <string name="broadcast_notification_title">You are live</string>
+    <string name="broadcast_notification_text">Screen and voice are being shared end-to-end encrypted.</string>
+</resources>
