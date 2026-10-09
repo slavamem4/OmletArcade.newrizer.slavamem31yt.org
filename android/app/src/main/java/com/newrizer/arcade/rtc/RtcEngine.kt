@@ -7,8 +7,11 @@ import io.livekit.android.RoomOptions
 import io.livekit.android.e2ee.E2EEOptions
 import io.livekit.android.room.Room
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withTimeout
 
 /**
  * LiveKit session wrapper.
@@ -32,30 +35,56 @@ class RtcEngine(private val context: Context) {
         val error: String? = null,
     )
 
+    /**
+     * Connects with a bounded wait and a second attempt.
+     *
+     * A stalled TCP handshake on a flaky mobile network otherwise leaves the
+     * caller waiting forever, which looked exactly like "streams do not work".
+     */
     suspend fun connect(url: String, token: String, roomKeyBase64: String?) {
         disconnect()
         val e2ee = roomKeyBase64?.let { key ->
             E2EEOptions().apply { keyProvider.setSharedKey(key, null) }
         }
-        val created = LiveKit.create(
-            appContext = context.applicationContext,
-            options = RoomOptions(
-                adaptiveStream = true,
-                dynacast = true,
-                e2eeOptions = e2ee,
-            ),
-        )
-        room = created
-        runCatching { created.connect(url, token) }
-            .onFailure { error ->
-                _state.value = _state.value.copy(connected = false, error = error.message)
+
+        var lastError: String? = null
+        repeat(CONNECT_ATTEMPTS) { attempt ->
+            val created = LiveKit.create(
+                appContext = context.applicationContext,
+                options = RoomOptions(
+                    adaptiveStream = true,
+                    dynacast = true,
+                    e2eeOptions = e2ee,
+                ),
+            )
+            room = created
+
+            val outcome = runCatching {
+                withTimeout(CONNECT_TIMEOUT_MS) { created.connect(url, token) }
+            }
+            if (outcome.isSuccess) {
+                _state.value = _state.value.copy(
+                    connected = true,
+                    error = null,
+                    participants = created.remoteParticipants.size + 1,
+                )
                 return
             }
-        _state.value = _state.value.copy(
-            connected = true,
-            error = null,
-            participants = created.remoteParticipants.size + 1,
-        )
+
+            val error = outcome.exceptionOrNull()
+            lastError = when (error) {
+                is TimeoutCancellationException -> "Сервер не ответил вовремя"
+                else -> error?.message ?: "Не удалось подключиться"
+            }
+            runCatching {
+                created.disconnect()
+                created.release()
+            }
+            room = null
+            if (attempt < CONNECT_ATTEMPTS - 1) delay(RETRY_DELAY_MS)
+        }
+
+        _state.value = _state.value.copy(connected = false, error = lastError)
     }
 
     suspend fun setMicrophone(enabled: Boolean) {
@@ -95,5 +124,11 @@ class RtcEngine(private val context: Context) {
         room?.release()
         room = null
         _state.value = RtcState()
+    }
+
+    private companion object {
+        const val CONNECT_TIMEOUT_MS = 15_000L
+        const val CONNECT_ATTEMPTS = 2
+        const val RETRY_DELAY_MS = 1_200L
     }
 }

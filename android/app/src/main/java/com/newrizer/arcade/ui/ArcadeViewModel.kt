@@ -2,6 +2,7 @@ package com.newrizer.arcade.ui
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
@@ -9,12 +10,19 @@ import com.newrizer.arcade.crypto.E2EE
 import com.newrizer.arcade.data.ApiException
 import com.newrizer.arcade.data.ArcadeRepository
 import com.newrizer.arcade.data.ChatMessage
+import com.newrizer.arcade.data.EmailProofStore
+import com.newrizer.arcade.data.ImageCodec
+import com.newrizer.arcade.data.KeyEnvelope
+import com.newrizer.arcade.data.Lan
 import com.newrizer.arcade.data.McSession
 import com.newrizer.arcade.data.McSessionCreate
+import com.newrizer.arcade.data.Mission
+import com.newrizer.arcade.data.Post
 import com.newrizer.arcade.data.Profile
 import com.newrizer.arcade.data.RoomHandle
 import com.newrizer.arcade.data.Stream
 import com.newrizer.arcade.data.StreamCreate
+import com.newrizer.arcade.data.UserCard
 import com.newrizer.arcade.data.VoiceRoom
 import com.newrizer.arcade.rtc.RtcEngine
 import com.newrizer.arcade.service.BroadcastService
@@ -27,19 +35,40 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
+enum class AuthStage { CREDENTIALS, VERIFY_EMAIL, READY }
+
 data class AuthState(
+    val stage: AuthStage = AuthStage.CREDENTIALS,
     val signedIn: Boolean = false,
     val uid: String? = null,
+    val email: String = "",
     val busy: Boolean = false,
+    val codeSent: Boolean = false,
     val error: String? = null,
+    val notice: String? = null,
 )
 
 data class FeedState(
     val streams: List<Stream> = emptyList(),
     val voiceRooms: List<VoiceRoom> = emptyList(),
     val mcSessions: List<McSession> = emptyList(),
+    val posts: List<Post> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
+)
+
+data class SearchState(
+    val query: String = "",
+    val results: List<UserCard> = emptyList(),
+    val searching: Boolean = false,
+)
+
+data class ProfileState(
+    val profile: Profile? = null,
+    val missions: List<Mission> = emptyList(),
+    val posts: List<Post> = emptyList(),
+    val busy: Boolean = false,
+    val notice: String? = null,
 )
 
 data class RoomState(
@@ -51,6 +80,7 @@ data class RoomState(
     val screenShareOn: Boolean = false,
     val encrypted: Boolean = false,
     val joinCode: String? = null,
+    val lanAddress: String? = null,
     val members: List<String> = emptyList(),
     val messages: List<ChatMessage> = emptyList(),
     val busy: Boolean = false,
@@ -61,14 +91,17 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
 
     private val rtc = RtcEngine(application)
 
-    private val _auth = MutableStateFlow(AuthState(signedIn = FirebaseAuth.getInstance().currentUser != null))
+    private val _auth = MutableStateFlow(AuthState())
     val auth: StateFlow<AuthState> = _auth.asStateFlow()
 
     private val _feed = MutableStateFlow(FeedState())
     val feed: StateFlow<FeedState> = _feed.asStateFlow()
 
-    private val _profile = MutableStateFlow<Profile?>(null)
-    val profile: StateFlow<Profile?> = _profile.asStateFlow()
+    private val _search = MutableStateFlow(SearchState())
+    val search: StateFlow<SearchState> = _search.asStateFlow()
+
+    private val _profile = MutableStateFlow(ProfileState())
+    val profile: StateFlow<ProfileState> = _profile.asStateFlow()
 
     private val _room = MutableStateFlow(RoomState())
     val room: StateFlow<RoomState> = _room.asStateFlow()
@@ -76,8 +109,10 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
     /** Lives only in memory, never persisted, wiped when the room closes. */
     private var roomKey: ByteArray? = null
     private var roomKeyId: String? = null
+    private var challenge: String? = null
     private var memberJob: Job? = null
     private var chatJob: Job? = null
+    private var searchJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -92,27 +127,38 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ---- auth -------------------------------------------------------------
+    // ---- auth ---------------------------------------------------------------
 
-    fun signIn(email: String, password: String) = runAuth {
+    fun signIn(email: String, password: String) = runAuth(email) {
         FirebaseAuth.getInstance().signInWithEmailAndPassword(email.trim(), password).await()
     }
 
-    fun signUp(email: String, password: String, displayName: String) = runAuth {
+    fun signUp(email: String, password: String, displayName: String) = runAuth(email) {
+        require(displayName.trim().length >= 2) { "Имя от 2 символов" }
+        require(password.length >= 8) { "Пароль от 8 символов" }
         FirebaseAuth.getInstance().createUserWithEmailAndPassword(email.trim(), password).await()
         ArcadeRepository.saveProfile(displayName.trim(), avatarId = 0, bio = "")
     }
 
-    private fun runAuth(block: suspend () -> Unit) {
-        _auth.value = _auth.value.copy(busy = true, error = null)
+    private fun runAuth(email: String, block: suspend () -> Unit) {
+        _auth.value = _auth.value.copy(busy = true, error = null, notice = null)
         viewModelScope.launch {
             runCatching { block() }
                 .onSuccess {
                     val uid = FirebaseAuth.getInstance().currentUser?.uid
-                    _auth.value = AuthState(signedIn = uid != null, uid = uid)
                     runCatching { ArcadeRepository.publishPublicKey() }
-                    loadProfile()
-                    refreshFeed()
+                    if (ArcadeRepository.emailVerified()) {
+                        _auth.value = AuthState(AuthStage.READY, signedIn = true, uid = uid, email = email.trim())
+                        afterSignIn()
+                    } else {
+                        _auth.value = AuthState(
+                            stage = AuthStage.VERIFY_EMAIL,
+                            signedIn = true,
+                            uid = uid,
+                            email = email.trim(),
+                        )
+                        requestEmailCode()
+                    }
                 }
                 .onFailure { error ->
                     _auth.value = _auth.value.copy(busy = false, error = readable(error))
@@ -120,58 +166,178 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Asks the backend to mail a six digit code to the account address. */
+    fun requestEmailCode() {
+        val address = _auth.value.email.ifEmpty { ArcadeRepository.email.orEmpty() }
+        if (address.isEmpty()) {
+            _auth.value = _auth.value.copy(error = "Нет адреса почты у аккаунта")
+            return
+        }
+        _auth.value = _auth.value.copy(busy = true, error = null, notice = null)
+        viewModelScope.launch {
+            runCatching { ArcadeRepository.sendEmailCode(address) }
+                .onSuccess {
+                    challenge = it.challenge
+                    _auth.value = _auth.value.copy(
+                        busy = false,
+                        codeSent = true,
+                        notice = "Код отправлен на $address",
+                    )
+                }
+                .onFailure {
+                    _auth.value = _auth.value.copy(busy = false, error = readable(it))
+                }
+        }
+    }
+
+    fun confirmEmailCode(code: String) {
+        val pending = challenge
+        if (pending == null) {
+            requestEmailCode()
+            return
+        }
+        _auth.value = _auth.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            runCatching { ArcadeRepository.confirmEmailCode(pending, code) }
+                .onSuccess {
+                    challenge = null
+                    _auth.value = _auth.value.copy(stage = AuthStage.READY, busy = false, notice = null)
+                    afterSignIn()
+                }
+                .onFailure { _auth.value = _auth.value.copy(busy = false, error = readable(it)) }
+        }
+    }
+
     fun signOut() {
         leaveRoom()
+        EmailProofStore.clear()
         FirebaseAuth.getInstance().signOut()
         _auth.value = AuthState()
         _feed.value = FeedState()
-        _profile.value = null
+        _profile.value = ProfileState()
+        _search.value = SearchState()
     }
 
     fun bootstrap() {
-        if (FirebaseAuth.getInstance().currentUser == null) return
-        _auth.value = _auth.value.copy(signedIn = true, uid = ArcadeRepository.uid)
-        viewModelScope.launch {
-            runCatching { ArcadeRepository.publishPublicKey() }
-            loadProfile()
-            refreshFeed()
+        val user = FirebaseAuth.getInstance().currentUser ?: return
+        val verified = ArcadeRepository.emailVerified()
+        _auth.value = AuthState(
+            stage = if (verified) AuthStage.READY else AuthStage.VERIFY_EMAIL,
+            signedIn = true,
+            uid = user.uid,
+            email = user.email.orEmpty(),
+        )
+        if (verified) {
+            viewModelScope.launch { runCatching { ArcadeRepository.publishPublicKey() } }
+            afterSignIn()
         }
     }
+
+    private fun afterSignIn() {
+        loadProfile()
+        refreshFeed()
+    }
+
+    // ---- profile -------------------------------------------------------------
 
     private fun loadProfile() {
         viewModelScope.launch {
-            runCatching { ArcadeRepository.loadProfile() }.onSuccess { _profile.value = it }
+            runCatching {
+                Triple(
+                    ArcadeRepository.loadProfile(),
+                    ArcadeRepository.missions(),
+                    ArcadeRepository.postsOf(ArcadeRepository.uid.orEmpty()),
+                )
+            }.onSuccess { (profile, missions, posts) ->
+                _profile.value = _profile.value.copy(
+                    profile = profile,
+                    missions = missions,
+                    posts = posts,
+                    busy = false,
+                )
+            }
         }
     }
 
-    fun saveProfile(displayName: String, avatarId: Int, bio: String) {
+    fun saveProfile(displayName: String, bio: String, avatar: Uri?) {
+        _profile.value = _profile.value.copy(busy = true, notice = null)
         viewModelScope.launch {
-            runCatching { ArcadeRepository.saveProfile(displayName, avatarId, bio) }
-                .onSuccess { _profile.value = it }
-                .onFailure { _feed.value = _feed.value.copy(error = readable(it)) }
+            runCatching {
+                val photo = avatar?.let { ImageCodec.encodeAvatar(getApplication(), it) }
+                ArcadeRepository.saveProfile(displayName, avatarId = 0, bio = bio, photo = photo)
+            }
+                .onSuccess {
+                    _profile.value = _profile.value.copy(profile = it, busy = false, notice = "Сохранено")
+                }
+                .onFailure {
+                    _profile.value = _profile.value.copy(busy = false, notice = readable(it))
+                }
         }
     }
 
-    // ---- feed -------------------------------------------------------------
+    fun publishPost(text: String, image: Uri?) {
+        _profile.value = _profile.value.copy(busy = true, notice = null)
+        viewModelScope.launch {
+            runCatching {
+                val encoded = image?.let { ImageCodec.encodePost(getApplication(), it) }
+                if (image != null && encoded == null) error("Не удалось сжать картинку")
+                ArcadeRepository.publishPost(text, encoded)
+            }
+                .onSuccess {
+                    _profile.value = _profile.value.copy(busy = false, notice = "Пост опубликован")
+                    loadProfile()
+                    refreshFeed()
+                }
+                .onFailure { _profile.value = _profile.value.copy(busy = false, notice = readable(it)) }
+        }
+    }
+
+    fun deletePost(postId: String) {
+        viewModelScope.launch {
+            runCatching { ArcadeRepository.deletePost(postId) }
+                .onSuccess { loadProfile(); refreshFeed() }
+        }
+    }
+
+    // ---- feed and search -----------------------------------------------------
 
     fun refreshFeed() {
         _feed.value = _feed.value.copy(loading = true, error = null)
         viewModelScope.launch {
             runCatching {
-                Triple(
-                    ArcadeRepository.streams(),
-                    ArcadeRepository.voiceRooms(),
-                    ArcadeRepository.mcSessions(),
+                FeedState(
+                    streams = ArcadeRepository.streams(),
+                    voiceRooms = ArcadeRepository.voiceRooms(),
+                    mcSessions = ArcadeRepository.mcSessions(),
+                    posts = ArcadeRepository.feedPosts(),
                 )
             }
-                .onSuccess { (streams, voice, mc) ->
-                    _feed.value = FeedState(streams = streams, voiceRooms = voice, mcSessions = mc)
-                }
+                .onSuccess { _feed.value = it }
                 .onFailure { _feed.value = _feed.value.copy(loading = false, error = readable(it)) }
         }
     }
 
-    // ---- sessions ---------------------------------------------------------
+    fun onSearchChange(query: String) {
+        _search.value = _search.value.copy(query = query, searching = query.trim().length >= 2)
+        searchJob?.cancel()
+        if (query.trim().length < 2) {
+            _search.value = _search.value.copy(results = emptyList(), searching = false)
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(300)
+            runCatching { ArcadeRepository.searchUsers(query) }
+                .onSuccess { _search.value = _search.value.copy(results = it, searching = false) }
+                .onFailure { _search.value = _search.value.copy(results = emptyList(), searching = false) }
+        }
+    }
+
+    fun clearSearch() {
+        searchJob?.cancel()
+        _search.value = SearchState()
+    }
+
+    // ---- sessions ------------------------------------------------------------
 
     fun startStream(title: String, game: String, visibility: String) = withRoomBusy {
         openRoom(ArcadeRepository.startStream(StreamCreate(title, game, visibility)))
@@ -190,31 +356,29 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun hostMinecraft(create: McSessionCreate) = withRoomBusy {
-        openRoom(ArcadeRepository.hostMinecraft(create))
+        openRoom(ArcadeRepository.hostMinecraft(create, Lan.address()))
     }
 
     fun joinPublicMinecraft(session: McSession) = withRoomBusy {
         openRoom(ArcadeRepository.joinMinecraft(session))
     }
 
-    fun joinMinecraft(code: String) = withRoomBusy {
+    fun joinByCode(code: String) = withRoomBusy {
         openRoom(ArcadeRepository.joinByCode(code))
     }
 
     private fun withRoomBusy(block: suspend () -> Unit) {
         _room.value = _room.value.copy(busy = true, error = null)
         viewModelScope.launch {
-            runCatching { block() }
-                .onFailure {
-                    _room.value = RoomState(error = readable(it))
-                }
+            runCatching { block() }.onFailure { _room.value = RoomState(error = readable(it)) }
         }
     }
 
     /**
-     * Opens a session: the host mints a fresh room key and wraps it for every
-     * member; a guest unwraps the envelope addressed to it. The key is then
-     * handed to LiveKit so media frames are encrypted before leaving the phone.
+     * Opens a session. Encrypted rooms mint or unwrap a key before connecting;
+     * a public broadcast connects straight away, because a stream everyone may
+     * watch gains nothing from end to end encryption and the wait for a key
+     * was the thing that kept viewers out.
      */
     private suspend fun openRoom(handle: RoomHandle) {
         _room.value = RoomState(
@@ -222,38 +386,46 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
             title = handle.title,
             isHost = handle.isOwner,
             joinCode = handle.joinCode,
+            lanAddress = handle.lanAddress,
+            encrypted = handle.encrypted,
             busy = true,
         )
 
-        val key: ByteArray
-        val keyId: String
+        var key: ByteArray? = null
+        var keyId: String? = null
         if (handle.isOwner) {
-            // Fresh key per session; wrapped for members as they appear.
             key = E2EE.newRoomKey()
             keyId = E2EE.publicKeyId()
         } else {
-            val envelope = awaitKeyEnvelope(handle.roomId)
-            key = E2EE.unwrapRoomKey(envelope.wrappedKey, handle.roomId.toByteArray())
-            keyId = envelope.keyId
+            val envelope = awaitKeyEnvelope(handle.roomId, required = handle.encrypted)
+            if (envelope != null) {
+                key = E2EE.unwrapRoomKey(envelope.wrappedKey, handle.roomId.toByteArray())
+                keyId = envelope.keyId
+            }
         }
         roomKey = key
         roomKeyId = keyId
 
         val grant = ArcadeRepository.rtcToken(handle.roomId, publish = handle.isOwner)
-        rtc.connect(grant.url, grant.token, E2EE.encodeKey(key))
+        rtc.connect(
+            url = grant.url,
+            token = grant.token,
+            roomKeyBase64 = if (handle.encrypted && key != null) E2EE.encodeKey(key) else null,
+        )
 
-        _room.value = _room.value.copy(busy = false, encrypted = true)
+        _room.value = _room.value.copy(busy = false)
         observeRoom(handle.roomId)
     }
 
     /** The host wraps a key only after it sees the member, so this polls. */
-    private suspend fun awaitKeyEnvelope(roomId: String): com.newrizer.arcade.data.KeyEnvelope {
+    private suspend fun awaitKeyEnvelope(roomId: String, required: Boolean): KeyEnvelope? {
         repeat(KEY_WAIT_ATTEMPTS) {
             val envelope = runCatching { ArcadeRepository.roomKeyEnvelope(roomId) }.getOrNull()
             if (envelope != null) return envelope
             delay(KEY_WAIT_DELAY_MS)
         }
-        throw IllegalStateException("The host has not shared a key for this session yet")
+        if (required) error("Хост ещё не раздал ключ этой сессии")
+        return null
     }
 
     private fun observeRoom(roomId: String) {
@@ -284,6 +456,7 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
         val key = roomKey ?: return
         val keyId = roomKeyId ?: return
         runCatching { ArcadeRepository.sendChat(roomId, key, keyId, text) }
+            .onSuccess { viewModelScope.launch { ArcadeRepository.advanceMission("talker") } }
             .onFailure { _room.value = _room.value.copy(error = readable(it)) }
     }
 
@@ -326,6 +499,7 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
                     runCatching { ArcadeRepository.closeRoom(roomId, state.joinCode) }
                 }
                 refreshFeed()
+                loadProfile()
             }
         }
         _room.value = RoomState()
@@ -340,11 +514,11 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun readable(error: Throwable): String = when (error) {
         is ApiException -> error.message
-        else -> error.message ?: "Something went wrong"
+        else -> error.message ?: "Что-то пошло не так"
     }
 
     private companion object {
-        const val KEY_WAIT_ATTEMPTS = 12
-        const val KEY_WAIT_DELAY_MS = 1200L
+        const val KEY_WAIT_ATTEMPTS = 10
+        const val KEY_WAIT_DELAY_MS = 900L
     }
 }

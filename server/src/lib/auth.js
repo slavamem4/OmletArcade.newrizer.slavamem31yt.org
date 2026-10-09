@@ -6,6 +6,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
 import { forbidden, unauthorized } from './http.js';
 import { verifyIdToken } from './identity.js';
+import { proofMatches } from './verification.js';
 import { readAs } from './rtdb.js';
 
 const BEARER = /^Bearer\s+([A-Za-z0-9._-]{20,4096})$/;
@@ -49,4 +50,16 @@ export const requireUser = async (req, _res, next) => {
     if (error && error.status) return next(error);
     return next(unauthorized('Invalid or expired credential'));
   }
+};
+
+// Proof that the address behind the account is real. The proof is signed by
+// this service, so a client cannot mint one; without it an account can browse
+// but cannot go live.
+export const requireVerifiedEmail = (req, _res, next) => {
+  if (!config.email.enforce) return next();
+  const proof = req.get('x-email-verified');
+  if (!proof || !proofMatches(proof, req.user.uid)) {
+    return next(forbidden('Confirm your email address first'));
+  }
+  return next();
 };

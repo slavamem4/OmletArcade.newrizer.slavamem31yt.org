@@ -5,6 +5,8 @@
 // public signing keys, and privileged writes are enforced by database rules
 // instead of an admin credential.
 
+import { createHash } from 'node:crypto';
+
 const required = (name) => {
   const value = process.env[name];
   if (typeof value !== 'string' || value.trim() === '') {
@@ -50,10 +52,33 @@ export const config = Object.freeze({
     trustProxyHops: Number.parseInt(optional('TRUST_PROXY_HOPS', '1'), 10),
   }),
 
+  email: Object.freeze((() => {
+    const serviceId = optional('EMAILJS_SERVICE_ID', '');
+    const templateId = optional('EMAILJS_TEMPLATE_ID', '');
+    const publicKey = optional('EMAILJS_PUBLIC_KEY', '');
+    const privateKey = optional('EMAILJS_PRIVATE_KEY', '');
+    return {
+      enabled: Boolean(serviceId && templateId && publicKey && privateKey),
+      serviceId,
+      templateId,
+      publicKey,
+      privateKey,
+      // Signs verification challenges and proofs. Defaults to a key derived
+      // from the LiveKit secret so a deployment is never left unsigned.
+      tokenSecret: optional(
+        'EMAIL_TOKEN_SECRET',
+        createHash('sha256').update(`${required('LIVEKIT_API_SECRET')}:email`).digest('hex'),
+      ),
+      // When on, a verified address is required before going live.
+      enforce: optional('EMAIL_VERIFICATION_REQUIRED', 'true') === 'true',
+    };
+  })()),
+
   limits: Object.freeze({
     windowMs: Number.parseInt(optional('RATE_WINDOW_MS', '60000'), 10),
     globalMax: Number.parseInt(optional('RATE_GLOBAL_MAX', '240'), 10),
     tokenMax: Number.parseInt(optional('RATE_TOKEN_MAX', '30'), 10),
+    emailMax: Number.parseInt(optional('RATE_EMAIL_MAX', '10'), 10),
   }),
 });
 
@@ -68,4 +93,10 @@ if (!/^https:\/\//i.test(config.firebase.databaseUrl)) {
 }
 if (!/^[a-z0-9-]{4,40}$/.test(config.firebase.projectId)) {
   throw new Error('FIREBASE_PROJECT_ID looks malformed');
+}
+if (config.email.enforce && !config.email.enabled) {
+  throw new Error(
+    'EMAIL_VERIFICATION_REQUIRED is on but EMAILJS_SERVICE_ID / EMAILJS_TEMPLATE_ID / ' +
+      'EMAILJS_PUBLIC_KEY / EMAILJS_PRIVATE_KEY are not all set',
+  );
 }

@@ -275,5 +275,113 @@ await deny('nobody joins a finished session', 'PUT', `roomMembers/${ROOM}/dave`,
   joinedAt: SV,
 });
 
+// ---- profile fields, search, posts, lan -------------------------------------
+
+const queryCheck = async (label, expectation, path, uid, qs) => {
+  const response = await fetch(`${url(path, uid)}&${qs}`);
+  const ok = response.ok;
+  if (ok === (expectation === 'allow')) {
+    passed += 1;
+    console.log(`  ok    ${label}`);
+  } else {
+    failed += 1;
+    console.log(`  FAIL  ${label} -> ${response.status} ${(await response.text()).slice(0, 120)}`);
+  }
+};
+
+const JPEG = 'QUJDRA=='; // tiny base64 payload, shape is what the rules check
+
+section('profile extras');
+await allow('alice stores the searchable name', 'PATCH', 'users/alice', 'alice', {
+  displayName: 'Alice',
+  nameLower: 'alice',
+  avatarId: 1,
+  updatedAt: SV,
+});
+await deny('nameLower must mirror displayName', 'PATCH', 'users/alice', 'alice', {
+  displayName: 'Alice',
+  nameLower: 'bob',
+  updatedAt: SV,
+});
+await allow('alice sets an avatar photo', 'PATCH', 'users/alice', 'alice', {
+  photo: JPEG,
+  updatedAt: SV,
+});
+await deny('a photo cannot be arbitrary text', 'PATCH', 'users/alice', 'alice', {
+  photo: 'not base64 !!',
+  updatedAt: SV,
+});
+await deny('an oversized photo is refused', 'PATCH', 'users/alice', 'alice', {
+  photo: 'A'.repeat(90004),
+  updatedAt: SV,
+});
+await allow('mission progress is recorded', 'PUT', 'users/alice/missions/author', 'alice', 1);
+await deny('mission progress stays a number', 'PUT', 'users/alice/missions/author', 'alice', 'done');
+await deny('mission ids are constrained', 'PUT', 'users/alice/missions/DROP_TABLE', 'alice', 1);
+await deny('bob cannot move alice forward', 'PUT', 'users/alice/missions/author', 'bob', 5);
+await allow('xp may grow', 'PATCH', 'users/alice', 'alice', { xp: 120, updatedAt: SV });
+await deny('xp cannot be rolled back', 'PATCH', 'users/alice', 'alice', { xp: 10, updatedAt: SV });
+await deny('bob cannot grant himself xp on alice', 'PATCH', 'users/alice', 'bob', { xp: 9999, updatedAt: SV });
+
+section('user search');
+await queryCheck('prefix search is allowed', 'allow', 'users', 'bob', 'orderBy=%22nameLower%22&limitToFirst=20');
+await queryCheck('a bulk dump is refused', 'deny', 'users', 'bob', '');
+await queryCheck('a wide page is refused', 'deny', 'users', 'bob', 'orderBy=%22nameLower%22&limitToFirst=500');
+await queryCheck('anonymous search is refused', 'deny', 'users', null, 'orderBy=%22nameLower%22&limitToFirst=20');
+
+section('posts');
+const POST = 'post_alice_1';
+await allow('alice publishes a post', 'PUT', `posts/${POST}`, 'alice', {
+  authorUid: 'alice',
+  authorName: 'Alice',
+  text: 'первый стрим сегодня',
+  image: JPEG,
+  createdAt: SV,
+});
+await deny('a post cannot be signed with another uid', 'PUT', 'posts/post_fake', 'bob', {
+  authorUid: 'alice',
+  authorName: 'Alice',
+  text: 'не я',
+  createdAt: SV,
+});
+await deny('a post body has a limit', 'PUT', 'posts/post_long', 'bob', {
+  authorUid: 'bob',
+  authorName: 'Bob',
+  text: 'x'.repeat(501),
+  createdAt: SV,
+});
+await deny('a post image has a limit', 'PUT', 'posts/post_big', 'bob', {
+  authorUid: 'bob',
+  authorName: 'Bob',
+  text: 'большая картинка',
+  image: 'A'.repeat(270004),
+  createdAt: SV,
+});
+await deny('unknown fields are refused', 'PUT', 'posts/post_extra', 'bob', {
+  authorUid: 'bob',
+  authorName: 'Bob',
+  text: 'привет',
+  pinned: true,
+  createdAt: SV,
+});
+await deny('timestamps cannot be faked', 'PUT', 'posts/post_past', 'bob', {
+  authorUid: 'bob',
+  authorName: 'Bob',
+  text: 'назад в прошлое',
+  createdAt: 1,
+});
+await deny('a post cannot be edited after the fact', 'PUT', `posts/${POST}/text`, 'alice', 'правка');
+await deny('bob cannot delete alice post', 'DELETE', `posts/${POST}`, 'bob');
+await allow('a signed-in reader opens a post', 'GET', `posts/${POST}`, 'bob');
+await queryCheck('the feed page is allowed', 'allow', 'posts', 'bob', 'orderBy=%22createdAt%22&limitToLast=30');
+await queryCheck('the author page is allowed', 'allow', 'posts', 'bob', 'orderBy=%22authorUid%22&limitToLast=50&equalTo=%22alice%22');
+await queryCheck('dumping every post is refused', 'deny', 'posts', 'bob', '');
+await allow('the author deletes the post', 'DELETE', `posts/${POST}`, 'alice');
+
+section('lan address');
+await allow('the host publishes its lan address', 'PUT', `rooms/${MC}/lan`, 'alice', '192.168.1.42:19132');
+await deny('the lan address must look like an address', 'PUT', `rooms/${MC}/lan`, 'alice', 'https://evil.example/x');
+await deny('another player cannot rewrite it', 'PUT', `rooms/${MC}/lan`, 'bob', '10.0.0.5:19132');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

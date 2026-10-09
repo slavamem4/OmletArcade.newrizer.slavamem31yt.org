@@ -5,6 +5,8 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.database.FirebaseDatabase
 import com.newrizer.arcade.crypto.E2EE
+import com.newrizer.arcade.data.EmailProofStore
+import com.newrizer.arcade.data.SettingsStore
 
 /**
  * Firebase is configured in code from BuildConfig instead of google-services.json
@@ -32,5 +34,7 @@ class ArcadeApplication : Application() {
 
         // Generates the device key pair on first launch if it does not exist.
         E2EE.initialise(this)
+        EmailProofStore.initialise(this)
+        SettingsStore.initialise(this)
     }
 }

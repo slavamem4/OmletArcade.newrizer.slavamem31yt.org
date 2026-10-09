@@ -98,6 +98,9 @@ object ApiClient {
         if (BuildConfig.APP_CHECK_TOKEN.isNotEmpty()) {
             builder.header("X-App-Check", BuildConfig.APP_CHECK_TOKEN)
         }
+        EmailProofStore.proofFor(FirebaseAuth.getInstance().currentUser?.uid)?.let { proof ->
+            builder.header("X-Email-Verified", proof)
+        }
         return json.decodeFromString(serializer, execute(builder.build()))
     }
 }

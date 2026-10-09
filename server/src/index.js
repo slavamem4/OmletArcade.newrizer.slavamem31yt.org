@@ -21,8 +21,9 @@ import pino from 'pino';
 import pinoHttp from 'pino-http';
 
 import { config } from './config.js';
-import { appGate, requireUser } from './lib/auth.js';
+import { appGate, requireUser, requireVerifiedEmail } from './lib/auth.js';
 import { HttpError } from './lib/http.js';
+import { emailRouter } from './routes/email.js';
 import { rtcRouter } from './routes/rtc.js';
 
 const logger = pino({
@@ -96,7 +97,14 @@ app.get('/healthz', (_req, res) => {
 });
 
 app.use('/v1', limiter(config.limits.globalMax), appGate);
-app.use('/v1/rtc', requireUser, limiter(config.limits.tokenMax), rtcRouter);
+app.use('/v1/email', requireUser, limiter(config.limits.emailMax), emailRouter);
+app.use(
+  '/v1/rtc',
+  requireUser,
+  requireVerifiedEmail,
+  limiter(config.limits.tokenMax),
+  rtcRouter,
+);
 
 app.use((_req, res) => {
   res.status(404).json({ error: { code: 'not_found', message: 'No such endpoint' } });
