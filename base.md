@@ -31,6 +31,7 @@ arcade/
 │  ├─ src/lib/verification.js  HMAC challenge/proof подтверждения почты, без состояния
 │  ├─ src/routes/rtc.js        /v1/rtc/token, /v1/rtc/close
 │  ├─ src/routes/email.js      /v1/email/code, /v1/email/confirm
+│  ├─ email-template.html      тело письма с кодом для EmailJS
 │  ├─ render.yaml              Blueprint для Render
 │  └─ .env.example             шаблон окружения
 ├─ firebase/
@@ -131,9 +132,16 @@ LiveKit Cloud (SFU)  ◄── медиа уже зашифровано ключ
 Необязательные: `MAX_BODY_BYTES` (64 КБ), `TRUST_PROXY_HOPS` (1), `RATE_WINDOW_MS`
 (60000), `RATE_GLOBAL_MAX` (120), `RATE_TOKEN_MAX` (20), `RATE_EMAIL_MAX` (10).
 
-Шаблон EmailJS должен принимать параметры: `to_email`, `email`, `code`, `passcode`,
-`app_name`, `expires`, `time`. Текст письма — на ваше усмотрение, обязателен только
-вывод `{{code}}`.
+Шаблон EmailJS получает параметры: `to_name`, `to_email`, `email`, `code`, `passcode`,
+`app_name`, `expires`, `time`. Готовое тело письма в цветах приложения лежит в
+`server/email-template.html` — его нужно вставить в EmailJS → Email Templates → Content
+→ Code editor, в поле To Email указать `{{to_email}}`, в Subject — `Код подтверждения {{code}}`.
+
+Обязательная настройка аккаунта: EmailJS → Account → Security →
+**Allow EmailJS API for non-browser applications** включить, **Use Private Key** включить.
+Без первого флага сервер получит 403: EmailJS по умолчанию принимает вызовы только из
+браузера. Приватный ключ уходит в поле `accessToken` и живёт только в окружении Render —
+в приложении его нет, телефон с EmailJS не разговаривает.
 
 Переменной `FIREBASE_SERVICE_ACCOUNT_B64` **больше нет**. Ключ service account не
 нужен, скачивать его не требуется, и политика Google Cloud

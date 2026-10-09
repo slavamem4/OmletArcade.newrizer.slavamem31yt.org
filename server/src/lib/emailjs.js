@@ -32,6 +32,9 @@ export const sendVerificationCode = async ({ to, code, minutes }) => {
         user_id: config.email.publicKey,
         accessToken: config.email.privateKey,
         template_params: {
+          // The template addresses the recipient by the part before the "@";
+          // no profile data is sent to the mail service.
+          to_name: to.split('@')[0].slice(0, 24),
           to_email: to,
           email: to,
           code,
@@ -49,9 +52,15 @@ export const sendVerificationCode = async ({ to, code, minutes }) => {
   }
 
   if (!response.ok) {
-    // EmailJS returns the reason as plain text; it is logged, never echoed.
+    // EmailJS answers in plain text. The body is logged, never echoed, but the
+    // status is: without it a misconfigured account looks like a generic 502.
     const detail = await response.text().catch(() => '');
-    const error = new HttpError(502, 'email_failed', 'Could not send the verification email');
+    const hint =
+      response.status === 403
+        ? 'EmailJS refused a non-browser call: enable "Allow EmailJS API for ' +
+          'non-browser applications" and "Use Private Key" in Account -> Security'
+        : `EmailJS answered ${response.status}`;
+    const error = new HttpError(502, 'email_failed', hint);
     error.upstream = `${response.status} ${detail.slice(0, 200)}`;
     throw error;
   }

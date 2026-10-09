@@ -95,8 +95,18 @@ if (!/^[a-z0-9-]{4,40}$/.test(config.firebase.projectId)) {
   throw new Error('FIREBASE_PROJECT_ID looks malformed');
 }
 if (config.email.enforce && !config.email.enabled) {
+  // Naming the exact variables turns a deploy failure into a one-line fix.
+  const missing = [
+    ['EMAILJS_SERVICE_ID', config.email.serviceId],
+    ['EMAILJS_TEMPLATE_ID', config.email.templateId],
+    ['EMAILJS_PUBLIC_KEY', config.email.publicKey],
+    ['EMAILJS_PRIVATE_KEY', config.email.privateKey],
+  ]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
   throw new Error(
-    'EMAIL_VERIFICATION_REQUIRED is on but EMAILJS_SERVICE_ID / EMAILJS_TEMPLATE_ID / ' +
-      'EMAILJS_PUBLIC_KEY / EMAILJS_PRIVATE_KEY are not all set',
+    `EMAIL_VERIFICATION_REQUIRED is on but these are not set: ${missing.join(', ')}. ` +
+      'Set them on Render, or set EMAIL_VERIFICATION_REQUIRED=false to start without ' +
+      'email verification.',
   );
 }

@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.newrizer.arcade.crypto.E2EE
+import com.newrizer.arcade.data.ApiClient
 import com.newrizer.arcade.data.ApiException
 import com.newrizer.arcade.data.ArcadeRepository
 import com.newrizer.arcade.data.ChatMessage
@@ -219,6 +220,9 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun bootstrap() {
+        // Render parks idle instances; this wakes one while the user is still
+        // typing, so the first real call does not eat the cold start.
+        ApiClient.warmUp()
         val user = FirebaseAuth.getInstance().currentUser ?: return
         val verified = ArcadeRepository.emailVerified()
         _auth.value = AuthState(
@@ -512,8 +516,18 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
         roomKey = null
     }
 
+    /** Server codes become sentences a player can act on. */
     private fun readable(error: Throwable): String = when (error) {
-        is ApiException -> error.message
+        is ApiException -> when (error.code) {
+            "email_disabled" -> "Отправка писем не настроена на сервере"
+            "email_failed" -> "Письмо не отправлено: ${error.message}"
+            "email_unavailable" -> "Почтовый сервис недоступен. Повторите позже."
+            "invalid_code" -> "Код неверный"
+            "expired" -> "Срок кода истёк, запросите новый"
+            "too_many_requests" -> "Слишком часто. Подождите минуту."
+            "forbidden" -> "Сначала подтвердите почту"
+            else -> error.message
+        }
         else -> error.message ?: "Что-то пошло не так"
     }
 

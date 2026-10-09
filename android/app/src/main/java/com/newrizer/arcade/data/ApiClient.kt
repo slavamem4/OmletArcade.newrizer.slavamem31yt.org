@@ -13,6 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -35,10 +36,13 @@ object ApiClient {
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
+    // Render's free tier parks an idle instance and takes up to a minute to
+    // answer the first request, so the read budget has to outlast a cold start.
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(120, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
 
@@ -67,8 +71,33 @@ object ApiClient {
         }
     }
 
+    /**
+     * Wakes a parked instance without blocking the user interface. Failures are
+     * ignored on purpose: this is a hint, not a dependency.
+     */
+    fun warmUp() {
+        val request = Request.Builder().url("$baseUrl/healthz").get().build()
+        client.newCall(request).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: IOException) = Unit
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) = response.close()
+        })
+    }
+
     private suspend fun execute(request: Request): String = withContext(Dispatchers.IO) {
-        client.newCall(request).execute().use { response ->
+        val response = try {
+            client.newCall(request).execute()
+        } catch (error: java.io.InterruptedIOException) {
+            throw ApiException(
+                408,
+                "timeout",
+                "Сервер не ответил вовремя. Он мог заснуть — повторите через полминуты.",
+            )
+        } catch (error: UnknownHostException) {
+            throw ApiException(0, "offline", "Нет связи с сервером. Проверьте интернет.")
+        } catch (error: IOException) {
+            throw ApiException(0, "offline", "Соединение прервалось: ${error.message ?: "сеть недоступна"}")
+        }
+        response.use { response ->
             val body = response.body?.string().orEmpty()
             if (response.isSuccessful) return@use body
             val error = runCatching {
