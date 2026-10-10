@@ -148,8 +148,8 @@ data class RoomHandle(
     val isOwner: Boolean,
     val encrypted: Boolean,
     val joinCode: String? = null,
-    /** Host address other players type into Minecraft on the same Wi-Fi. */
-    val lanAddress: String? = null,
+    /** True when the room appears in public listings, so heartbeats mirror there. */
+    val listed: Boolean = false,
 )
 
 data class KeyEnvelope(val keyId: String, val wrappedKey: String, val senderUid: String)

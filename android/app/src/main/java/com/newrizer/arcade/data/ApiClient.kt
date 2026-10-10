@@ -48,6 +48,19 @@ object ApiClient {
 
     private val baseUrl = BuildConfig.API_BASE_URL.trimEnd('/')
 
+    /** Relay endpoint for Minecraft datagrams; the token travels in the query. */
+    fun tunnelUrl(role: String, roomId: String, token: String): String =
+        baseUrl
+            .replaceFirst("https://", "wss://")
+            .replaceFirst("http://", "ws://") +
+            "/v1/tunnel/" + role + "?room=" + roomId +
+            "&token=" + java.net.URLEncoder.encode(token, "UTF-8")
+
+    fun newWebSocket(url: String, listener: okhttp3.WebSocketListener): okhttp3.WebSocket =
+        client.newWebSocket(okhttp3.Request.Builder().url(url).build(), listener)
+
+    suspend fun tunnelToken(): String = idToken()
+
     private suspend fun idToken(): String = withContext(Dispatchers.IO) {
         val user = FirebaseAuth.getInstance().currentUser
             ?: throw ApiException(401, "unauthorized", "Not signed in")

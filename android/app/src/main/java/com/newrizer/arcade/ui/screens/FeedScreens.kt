@@ -58,10 +58,12 @@ import com.newrizer.arcade.ui.theme.ArcadeColors
 fun HomeScreen(
     feed: FeedState,
     search: SearchState,
+    currentUid: String,
     onRefresh: () -> Unit,
     onWatch: (Stream) -> Unit,
     onOpenUser: (UserCard) -> Unit,
     onNewPost: () -> Unit,
+    onDeletePost: (String) -> Unit,
 ) {
     if (search.query.trim().length >= 2) {
         SearchResults(search, onOpenUser)
@@ -112,7 +114,7 @@ fun HomeScreen(
             }
         } else {
             items(feed.posts, key = { it.id }) { post ->
-                PostCard(post, canDelete = false, onDelete = {})
+                PostCard(post, canDelete = post.authorUid == currentUid) { onDeletePost(post.id) }
             }
         }
         item { Spacer(Modifier.height(90.dp)) }
@@ -202,7 +204,6 @@ fun StreamsScreen(feed: FeedState, onRefresh: () -> Unit, onWatch: (Stream) -> U
 @Composable
 fun GamesScreen(
     feed: FeedState,
-    lanAddress: String?,
     onRefresh: () -> Unit,
     onHost: () -> Unit,
     onJoinCode: () -> Unit,
@@ -219,13 +220,11 @@ fun GamesScreen(
                 GhostButton("По коду", icon = ArcadeIcons.Key, onClick = onJoinCode)
             }
         }
-        item { LanNotice(lanAddress) }
-
         if (feed.mcSessions.isEmpty()) {
             item {
                 EmptyState(
                     title = "Открытых миров нет",
-                    message = "Захости свой мир — друзья в той же сети Wi-Fi зайдут по адресу, остальные увидят карточку здесь.",
+                    message = "Захости свой мир: туннель Arcade пустит игроков из любой сети, а не только из твоего Wi-Fi.",
                     icon = ArcadeIcons.Cube,
                 )
             }
@@ -235,39 +234,6 @@ fun GamesScreen(
             }
         }
         item { Spacer(Modifier.height(90.dp)) }
-    }
-}
-
-@Composable
-private fun LanNotice(lanAddress: String?) {
-    Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-        Column(Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(ArcadeIcons.Wifi, null, tint = ArcadeColors.Coral, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Хостинг идёт с твоего телефона",
-                    color = ArcadeColors.TextPrimary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "Выделенных серверов пока нет: мир раздаёт устройство хоста. " +
-                    "Игроки должны быть в одной сети Wi-Fi — или подключиться к точке доступа хоста.",
-                color = ArcadeColors.TextSecondary,
-                fontSize = 12.5.sp,
-                lineHeight = 18.sp,
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = lanAddress?.let { "Твой адрес в сети: $it" } ?: "Сеть не определена — включи Wi-Fi или точку доступа",
-                color = if (lanAddress != null) ArcadeColors.Good else ArcadeColors.TextMuted,
-                fontSize = 12.5.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
     }
 }
 

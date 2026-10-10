@@ -3,15 +3,12 @@ package com.newrizer.arcade
 import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -58,7 +55,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.newrizer.arcade.crypto.E2EE
-import com.newrizer.arcade.data.Lan
 import com.newrizer.arcade.ui.ArcadeViewModel
 import com.newrizer.arcade.ui.AuthStage
 import com.newrizer.arcade.ui.components.ArcadeIcons
@@ -127,7 +123,6 @@ private fun ArcadeApp(viewModel: ArcadeViewModel = viewModel()) {
     var composeVisible by remember { mutableStateOf(false) }
     var postImage by remember { mutableStateOf<Uri?>(null) }
     var avatarImage by remember { mutableStateOf<Uri?>(null) }
-    val lanAddress = remember { Lan.address() }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -171,6 +166,7 @@ private fun ArcadeApp(viewModel: ArcadeViewModel = viewModel()) {
             onSignUp = viewModel::signUp,
             onConfirmCode = viewModel::confirmEmailCode,
             onResendCode = viewModel::requestEmailCode,
+            onResetPassword = viewModel::resetPassword,
             onSignOut = viewModel::signOut,
         )
         return
@@ -255,6 +251,7 @@ private fun ArcadeApp(viewModel: ArcadeViewModel = viewModel()) {
                         Tab.Home -> HomeScreen(
                             feed = feed,
                             search = search,
+                            currentUid = auth.uid.orEmpty(),
                             onRefresh = viewModel::refreshFeed,
                             onWatch = viewModel::watchStream,
                             onOpenUser = { viewModel.clearSearch() },
@@ -262,6 +259,7 @@ private fun ArcadeApp(viewModel: ArcadeViewModel = viewModel()) {
                                 postImage = null
                                 sheet = Sheet.POST
                             },
+                            onDeletePost = viewModel::deletePost,
                         )
 
                         Tab.Streams -> StreamsScreen(
@@ -273,7 +271,6 @@ private fun ArcadeApp(viewModel: ArcadeViewModel = viewModel()) {
 
                         Tab.Games -> GamesScreen(
                             feed = feed,
-                            lanAddress = lanAddress,
                             onRefresh = viewModel::refreshFeed,
                             onHost = { sheet = Sheet.MINECRAFT },
                             onJoinCode = { sheet = Sheet.JOIN_CODE },
@@ -355,13 +352,11 @@ private fun ArcadeApp(viewModel: ArcadeViewModel = viewModel()) {
         )
 
         Sheet.MINECRAFT -> HostWorldDialog(
-            lanAddress = lanAddress,
             onDismiss = { sheet = Sheet.NONE },
             onHost = { create ->
                 sheet = Sheet.NONE
                 viewModel.hostMinecraft(create)
             },
-            onOpenHotspot = { openHotspotSettings(context) },
         )
 
         Sheet.JOIN_CODE -> JoinCodeDialog(
@@ -499,31 +494,4 @@ private fun shareInvite(context: Context) {
         )
     }
     runCatching { context.startActivity(Intent.createChooser(intent, "Пригласить друзей")) }
-}
-
-/**
- * Hotspot configuration has no public intent, so the known settings component is
- * tried first and the generic wireless screen is the fallback.
- */
-private fun openHotspotSettings(context: Context) {
-    val tether = Intent(Intent.ACTION_MAIN).apply {
-        component = ComponentName("com.android.settings", "com.android.settings.TetherSettings")
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-    try {
-        context.startActivity(tether)
-        return
-    } catch (_: ActivityNotFoundException) {
-        // falls through to the generic screen below
-    } catch (_: SecurityException) {
-        // falls through to the generic screen below
-    }
-    val fallback = Intent(Settings.ACTION_WIRELESS_SETTINGS).apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-    try {
-        context.startActivity(fallback)
-    } catch (_: ActivityNotFoundException) {
-        Toast.makeText(context, "Настройки точки доступа недоступны", Toast.LENGTH_SHORT).show()
-    }
 }

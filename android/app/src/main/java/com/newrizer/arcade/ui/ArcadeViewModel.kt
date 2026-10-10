@@ -5,16 +5,24 @@ import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
+import com.google.firebase.auth.FirebaseAuthUserCollisionException
+import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.newrizer.arcade.crypto.E2EE
 import com.newrizer.arcade.data.ApiClient
 import com.newrizer.arcade.data.ApiException
+import com.newrizer.arcade.data.McTunnelHost
+import com.newrizer.arcade.data.McTunnelJoin
+import com.newrizer.arcade.data.SettingsStore
+import kotlinx.coroutines.isActive
 import com.newrizer.arcade.data.ArcadeRepository
 import com.newrizer.arcade.data.ChatMessage
 import com.newrizer.arcade.data.EmailProofStore
 import com.newrizer.arcade.data.ImageCodec
 import com.newrizer.arcade.data.KeyEnvelope
-import com.newrizer.arcade.data.Lan
 import com.newrizer.arcade.data.McSession
 import com.newrizer.arcade.data.McSessionCreate
 import com.newrizer.arcade.data.Mission
@@ -45,6 +53,8 @@ data class AuthState(
     val email: String = "",
     val busy: Boolean = false,
     val codeSent: Boolean = false,
+    /** Set when the address already exists: the form switches to sign-in. */
+    val forceSignIn: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
 )
@@ -81,7 +91,8 @@ data class RoomState(
     val screenShareOn: Boolean = false,
     val encrypted: Boolean = false,
     val joinCode: String? = null,
-    val lanAddress: String? = null,
+    val tunnelNote: String? = null,
+    val listed: Boolean = false,
     val members: List<String> = emptyList(),
     val messages: List<ChatMessage> = emptyList(),
     val busy: Boolean = false,
@@ -91,6 +102,9 @@ data class RoomState(
 class ArcadeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val rtc = RtcEngine(application)
+    private var tunnelHost: McTunnelHost? = null
+    private var tunnelJoin: McTunnelJoin? = null
+    private var heartbeatJob: Job? = null
 
     private val _auth = MutableStateFlow(AuthState())
     val auth: StateFlow<AuthState> = _auth.asStateFlow()
@@ -162,7 +176,11 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
                 .onFailure { error ->
-                    _auth.value = _auth.value.copy(busy = false, error = readable(error))
+                    _auth.value = _auth.value.copy(
+                        busy = false,
+                        error = readable(error),
+                        forceSignIn = error is FirebaseAuthUserCollisionException,
+                    )
                 }
         }
     }
@@ -209,6 +227,26 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Firebase mails the reset link; no code and no backend are involved. */
+    fun resetPassword(email: String) {
+        val address = email.trim()
+        if (address.length < 5 || !address.contains('@')) {
+            _auth.value = _auth.value.copy(error = "Введите адрес почты")
+            return
+        }
+        _auth.value = _auth.value.copy(busy = true, error = null, notice = null)
+        viewModelScope.launch {
+            runCatching { FirebaseAuth.getInstance().sendPasswordResetEmail(address).await() }
+                .onSuccess {
+                    _auth.value = _auth.value.copy(
+                        busy = false,
+                        notice = "Письмо для смены пароля отправлено на $address",
+                    )
+                }
+                .onFailure { _auth.value = _auth.value.copy(busy = false, error = readable(it)) }
+        }
+    }
+
     fun signOut() {
         leaveRoom()
         EmailProofStore.clear()
@@ -238,8 +276,26 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun afterSignIn() {
+        closeGhostSession()
         loadProfile()
         refreshFeed()
+    }
+
+    /**
+     * A host whose app was killed never marked its world ended, so the next
+     * start does it: lists everywhere lose the ghost immediately instead of
+     * waiting for the heartbeat window to pass.
+     */
+    private fun closeGhostSession() {
+        val saved = SettingsStore.activeSession ?: return
+        SettingsStore.activeSession = null
+        val parts = saved.split("|")
+        val roomId = parts.getOrNull(0).orEmpty()
+        if (!roomId.matches(Regex("^(stream|voice|mc)_[a-z0-9]{20}$"))) return
+        viewModelScope.launch {
+            runCatching { ArcadeRepository.closeRoom(roomId, parts.getOrNull(1)?.takeIf { it.isNotBlank() }) }
+            refreshFeed()
+        }
     }
 
     // ---- profile -------------------------------------------------------------
@@ -360,7 +416,7 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun hostMinecraft(create: McSessionCreate) = withRoomBusy {
-        openRoom(ArcadeRepository.hostMinecraft(create, Lan.address()))
+        openRoom(ArcadeRepository.hostMinecraft(create))
     }
 
     fun joinPublicMinecraft(session: McSession) = withRoomBusy {
@@ -390,10 +446,12 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
             title = handle.title,
             isHost = handle.isOwner,
             joinCode = handle.joinCode,
-            lanAddress = handle.lanAddress,
+            listed = handle.listed,
             encrypted = handle.encrypted,
             busy = true,
         )
+
+        startSessionBookkeeping(handle)
 
         var key: ByteArray? = null
         var keyId: String? = null
@@ -487,6 +545,53 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
         BroadcastService.stop(getApplication())
     }
 
+    /**
+     * A hosted session beats every 40 seconds so every other phone can tell a
+     * live world from a ghost left by a crash; the remembered session lets the
+     * next app start clean up after a force stop.
+     */
+    private fun startSessionBookkeeping(handle: RoomHandle) {
+        heartbeatJob?.cancel()
+        if (handle.isOwner) {
+            SettingsStore.activeSession =
+                handle.roomId + "|" + handle.joinCode.orEmpty() + "|" + handle.listed
+            heartbeatJob = viewModelScope.launch {
+                while (isActive) {
+                    delay(40_000)
+                    runCatching { ArcadeRepository.heartbeat(handle.roomId, handle.listed) }
+                }
+            }
+        }
+        if (!handle.roomId.startsWith("mc_")) return
+        viewModelScope.launch {
+            val note = runCatching {
+                if (handle.isOwner) {
+                    tunnelHost?.stop()
+                    tunnelHost = McTunnelHost(handle.roomId).also { it.start() }
+                    "Мир раздаёт твой телефон: открой его в Minecraft с включённой " +
+                        "видимостью по локальной сети. Игроки из любой сети зайдут через Arcade, " +
+                        "адрес им не нужен."
+                } else {
+                    val join = McTunnelJoin(handle.roomId)
+                    val port = join.start()
+                    tunnelJoin = join
+                    "Канал установлен. Добавь в Minecraft сервер 127.0.0.1:$port " +
+                        "(Игры - Серверы - Добавить сервер) и заходи в мир."
+                }
+            }.getOrElse { "Туннель не поднялся: " + readable(it) }
+            _room.value = _room.value.copy(tunnelNote = note)
+        }
+    }
+
+    private fun stopTunnels() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        tunnelHost?.stop()
+        tunnelHost = null
+        tunnelJoin?.stop()
+        tunnelJoin = null
+    }
+
     fun leaveRoom() {
         val state = _room.value
         memberJob?.cancel()
@@ -496,10 +601,12 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
         E2EE.wipe(roomKey)
         roomKey = null
         roomKeyId = null
+        stopTunnels()
         val roomId = state.roomId
         if (roomId != null) {
             viewModelScope.launch {
                 if (state.isHost) {
+                    SettingsStore.activeSession = null
                     runCatching { ArcadeRepository.closeRoom(roomId, state.joinCode) }
                 }
                 refreshFeed()
@@ -511,6 +618,7 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
+        stopTunnels()
         rtc.disconnect()
         E2EE.wipe(roomKey)
         roomKey = null
@@ -518,6 +626,16 @@ class ArcadeViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Server codes become sentences a player can act on. */
     private fun readable(error: Throwable): String = when (error) {
+        is FirebaseAuthUserCollisionException ->
+            "Эта почта уже зарегистрирована. Войдите с её паролем."
+        is FirebaseAuthInvalidUserException ->
+            "Аккаунт с такой почтой не найден. Создайте его."
+        is FirebaseAuthInvalidCredentialsException ->
+            "Неверная почта или пароль"
+        is FirebaseAuthWeakPasswordException ->
+            "Пароль слишком простой: минимум 8 символов"
+        is FirebaseNetworkException ->
+            "Нет связи с Firebase. Проверьте интернет."
         is ApiException -> when (error.code) {
             "email_disabled" -> "Отправка писем не настроена на сервере"
             "email_failed" -> "Письмо не отправлено: ${error.message}"

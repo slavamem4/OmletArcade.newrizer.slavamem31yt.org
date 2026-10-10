@@ -126,7 +126,7 @@ fun RoomScreen(
             }
         }
 
-        if (state.joinCode != null || state.lanAddress != null) {
+        if (state.joinCode != null || state.tunnelNote != null) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -150,18 +150,16 @@ fun RoomScreen(
                         )
                     }
                 }
-                if (state.lanAddress != null) {
+                if (state.tunnelNote != null) {
                     Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(ArcadeIcons.Wifi, null, tint = ArcadeColors.Good, modifier = Modifier.size(16.dp))
+                    Row(verticalAlignment = Alignment.Top) {
+                        Icon(ArcadeIcons.Cube, null, tint = ArcadeColors.Good, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Адрес в сети", color = ArcadeColors.TextSecondary, fontSize = 12.sp)
-                        Spacer(Modifier.width(10.dp))
                         Text(
-                            state.lanAddress,
-                            color = ArcadeColors.TextPrimary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
+                            state.tunnelNote,
+                            color = ArcadeColors.TextSecondary,
+                            fontSize = 12.5.sp,
+                            lineHeight = 18.sp,
                         )
                     }
                 }

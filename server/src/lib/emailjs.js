@@ -55,11 +55,12 @@ export const sendVerificationCode = async ({ to, code, minutes }) => {
     // EmailJS answers in plain text. The body is logged, never echoed, but the
     // status is: without it a misconfigured account looks like a generic 502.
     const detail = await response.text().catch(() => '');
-    const hint =
-      response.status === 403
-        ? 'EmailJS refused a non-browser call: enable "Allow EmailJS API for ' +
-          'non-browser applications" and "Use Private Key" in Account -> Security'
-        : `EmailJS answered ${response.status}`;
+    // EmailJS phrases its own failures clearly; passing the text through saves
+    // a round of guessing. It contains no credentials, only the reason.
+    const reason = detail.replace(/\s+/g, ' ').trim().slice(0, 160);
+    const hint = reason
+      ? `EmailJS ${response.status}: ${reason}`
+      : `EmailJS answered ${response.status}`;
     const error = new HttpError(502, 'email_failed', hint);
     error.upstream = `${response.status} ${detail.slice(0, 200)}`;
     throw error;

@@ -25,6 +25,15 @@ object SettingsStore {
         get() = !ready() || prefs.getBoolean("autoplay_wifi", true)
         set(value) { if (ready()) prefs.edit().putBoolean("autoplay_wifi", value).apply() }
 
+    /**
+     * The session this device hosts, as "roomId|joinCode|listed", so a crash or
+     * a force stop cannot leave a ghost world in everyone's list: the next
+     * start closes it.
+     */
+    var activeSession: String?
+        get() = if (ready()) prefs.getString("active_session", null) else null
+        set(value) { if (ready()) prefs.edit().putString("active_session", value).apply() }
+
     fun reset() {
         if (ready()) prefs.edit().clear().apply()
     }

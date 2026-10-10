@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,7 @@ fun AuthScreen(
     onSignUp: (String, String, String) -> Unit,
     onConfirmCode: (String) -> Unit,
     onResendCode: () -> Unit,
+    onResetPassword: (String) -> Unit,
     onSignOut: () -> Unit,
 ) {
     if (state.stage == AuthStage.VERIFY_EMAIL) {
@@ -58,6 +60,12 @@ fun AuthScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
+
+    // The address already exists: keep the player on the sign-in form instead
+    // of letting them hit the same wall again.
+    LaunchedEffect(state.forceSignIn) {
+        if (state.forceSignIn) register = false
+    }
 
     Column(
         modifier = Modifier
@@ -99,6 +107,16 @@ fun AuthScreen(
             Spacer(Modifier.height(8.dp))
         }
 
+        if (state.notice != null) {
+            Text(
+                text = state.notice,
+                color = ArcadeColors.Good,
+                fontSize = 12.5.sp,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
         if (state.busy) {
             Loader(Modifier.padding(vertical = 14.dp))
         } else {
@@ -109,6 +127,16 @@ fun AuthScreen(
             ) {
                 if (register) onSignUp(email, password, name) else onSignIn(email, password)
             }
+        }
+
+        if (!register) {
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = "Забыли пароль?",
+                color = ArcadeColors.TextSecondary,
+                fontSize = 13.sp,
+                modifier = Modifier.clickable { onResetPassword(email) },
+            )
         }
 
         Spacer(Modifier.height(16.dp))

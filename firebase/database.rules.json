@@ -132,6 +132,9 @@
         "endedAt": {
           ".validate": "newData.isNumber()"
         },
+        "lastSeen": {
+          ".validate": "newData.isNumber() && newData.val() === now"
+        },
         "lan": {
           ".validate": "newData.isString() && newData.val().length <= 32 && newData.val().matches(/^[0-9]{1,3}(\\.[0-9]{1,3}){3}:[0-9]{1,5}$/)"
         },
@@ -173,6 +176,9 @@
           "createdAt": {
             ".validate": "newData.isNumber()"
           },
+          "lastSeen": {
+            ".validate": "newData.isNumber() && newData.val() === now"
+          },
           "$other": {
             ".validate": false
           }
@@ -200,6 +206,9 @@
           },
           "createdAt": {
             ".validate": "newData.isNumber()"
+          },
+          "lastSeen": {
+            ".validate": "newData.isNumber() && newData.val() === now"
           },
           "$other": {
             ".validate": false
@@ -240,6 +249,9 @@
           },
           "createdAt": {
             ".validate": "newData.isNumber()"
+          },
+          "lastSeen": {
+            ".validate": "newData.isNumber() && newData.val() === now"
           },
           "$other": {
             ".validate": false

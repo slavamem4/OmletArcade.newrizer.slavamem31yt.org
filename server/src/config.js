@@ -7,17 +7,30 @@
 
 import { createHash } from 'node:crypto';
 
+// Values pasted into a dashboard often carry stray quotes or whitespace, and a
+// key that differs by one character fails in a way that looks like a wrong
+// setting somewhere else. Clean them once, here.
+const clean = (value) => {
+  const trimmed = value.trim();
+  const unquoted =
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+      ? trimmed.slice(1, -1).trim()
+      : trimmed;
+  return unquoted;
+};
+
 const required = (name) => {
   const value = process.env[name];
-  if (typeof value !== 'string' || value.trim() === '') {
+  if (typeof value !== 'string' || clean(value) === '') {
     throw new Error(`Missing required environment variable: ${name}`);
   }
-  return value.trim();
+  return clean(value);
 };
 
 const optional = (name, fallback) => {
   const value = process.env[name];
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : fallback;
+  return typeof value === 'string' && clean(value) !== '' ? clean(value) : fallback;
 };
 
 const parseList = (raw) =>

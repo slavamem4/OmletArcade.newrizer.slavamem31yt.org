@@ -25,6 +25,7 @@ import { appGate, requireUser, requireVerifiedEmail } from './lib/auth.js';
 import { HttpError } from './lib/http.js';
 import { emailRouter } from './routes/email.js';
 import { rtcRouter } from './routes/rtc.js';
+import { attachTunnel } from './routes/tunnel.js';
 
 const logger = pino({
   level: config.env === 'production' ? 'info' : 'debug',
@@ -139,7 +140,23 @@ app.use((error, req, res, _next) => {
 });
 
 const server = app.listen(config.port, '0.0.0.0', () => {
-  logger.info({ port: config.port, env: config.env }, 'arcade-api listening');
+  // Minecraft worlds hosted on phones reach remote players through this relay.
+  attachTunnel(server, logger);
+  // Lengths only: enough to spot an empty or truncated paste, never the value.
+  logger.info(
+    {
+      port: config.port,
+      env: config.env,
+      email: {
+        enforced: config.email.enforce,
+        serviceId: config.email.serviceId,
+        templateId: config.email.templateId,
+        publicKeyLength: config.email.publicKey.length,
+        privateKeyLength: config.email.privateKey.length,
+      },
+    },
+    'arcade-api listening',
+  );
 });
 
 const shutdown = (signal) => {

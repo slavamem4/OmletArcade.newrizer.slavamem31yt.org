@@ -378,10 +378,16 @@ await queryCheck('the author page is allowed', 'allow', 'posts', 'bob', 'orderBy
 await queryCheck('dumping every post is refused', 'deny', 'posts', 'bob', '');
 await allow('the author deletes the post', 'DELETE', `posts/${POST}`, 'alice');
 
-section('lan address');
-await allow('the host publishes its lan address', 'PUT', `rooms/${MC}/lan`, 'alice', '192.168.1.42:19132');
-await deny('the lan address must look like an address', 'PUT', `rooms/${MC}/lan`, 'alice', 'https://evil.example/x');
-await deny('another player cannot rewrite it', 'PUT', `rooms/${MC}/lan`, 'bob', '10.0.0.5:19132');
+section('heartbeat lastSeen');
+await allow('the host beats its own room', 'PATCH', `rooms/${MC}`, 'alice', { lastSeen: SV });
+await deny('a stranger cannot beat the room', 'PATCH', `rooms/${MC}`, 'bob', { lastSeen: SV });
+await deny('a client-side timestamp is refused', 'PATCH', `rooms/${MC}`, 'alice', { lastSeen: Date.now() });
+await allow('the host publishes the mc card with a beat', 'PUT', `listings/mc/${MC}`, 'alice', {
+  ownerUid: 'alice', ownerName: 'Alice', title: 'Test world', version: '26.3',
+  edition: 'bedrock', gameMode: 'survival', players: 1, maxPlayers: 8, createdAt: SV, lastSeen: SV,
+});
+await allow('the host beats its own card', 'PUT', `listings/mc/${MC}/lastSeen`, 'alice', SV);
+await deny('a stranger cannot beat the card', 'PUT', `listings/mc/${MC}/lastSeen`, 'bob', SV);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

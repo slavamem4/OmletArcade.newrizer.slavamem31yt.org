@@ -2,6 +2,8 @@ package com.newrizer.arcade.ui.screens
 
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,6 +69,12 @@ private fun Sheet(title: String, onDismiss: () -> Unit, content: @Composable () 
         }
     }
 }
+
+/** Every release a hosted world may run, from the last 1.x drop to the current one. */
+private val MC_VERSIONS = listOf(
+    "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8", "1.21.9", "1.21.10", "1.21.11",
+    "26.1", "26.1.1", "26.1.2", "26.2", "26.3",
+)
 
 @Composable
 private fun Options(values: List<String>, selected: String, onSelect: (String) -> Unit) {
@@ -136,9 +144,9 @@ fun VoiceRoomDialog(onDismiss: () -> Unit, onCreate: (String, Int) -> Unit) {
 }
 
 @Composable
-fun HostWorldDialog(lanAddress: String?, onDismiss: () -> Unit, onHost: (McSessionCreate) -> Unit, onOpenHotspot: () -> Unit) {
+fun HostWorldDialog(onDismiss: () -> Unit, onHost: (McSessionCreate) -> Unit) {
     var name by remember { mutableStateOf("") }
-    var version by remember { mutableStateOf("1.21") }
+    var version by remember { mutableStateOf(MC_VERSIONS.last()) }
     var edition by remember { mutableStateOf("bedrock") }
     var mode by remember { mutableStateOf("survival") }
     var size by remember { mutableStateOf("8") }
@@ -156,7 +164,11 @@ fun HostWorldDialog(lanAddress: String?, onDismiss: () -> Unit, onHost: (McSessi
         Spacer(Modifier.height(12.dp))
         Text("Версия", color = ArcadeColors.TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
-        Options(listOf("1.20", "1.21", "1.21.4"), version) { version = it }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MC_VERSIONS.forEach { value ->
+                Box(Modifier.clickable { version = value }) { Chip(value, accent = value == version) }
+            }
+        }
         Spacer(Modifier.height(12.dp))
         Text("Режим", color = ArcadeColors.TextSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
@@ -185,10 +197,10 @@ fun HostWorldDialog(lanAddress: String?, onDismiss: () -> Unit, onHost: (McSessi
                 .padding(12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(ArcadeIcons.Wifi, null, tint = ArcadeColors.Coral, modifier = Modifier.size(16.dp))
+                Icon(ArcadeIcons.Cube, null, tint = ArcadeColors.Coral, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Локальная сеть",
+                    "Мир живёт на твоём телефоне",
                     color = ArcadeColors.TextPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
@@ -196,12 +208,10 @@ fun HostWorldDialog(lanAddress: String?, onDismiss: () -> Unit, onHost: (McSessi
             }
             Spacer(Modifier.height(6.dp))
             Hint(
-                lanAddress?.let {
-                    "Мир раздаёт твой телефон. Игроки в той же сети вводят в Minecraft адрес $it"
-                } ?: "Сеть не найдена. Включи Wi-Fi или раздай точку доступа, чтобы друзья подключились.",
+                "Дедикейтов нет: хост — твой телефон. Но сеть больше не общая: " +
+                    "туннель Arcade соединяет мир с игроками из любого города. " +
+                    "Держи приложение и Minecraft открытыми, пока идёт игра.",
             )
-            Spacer(Modifier.height(10.dp))
-            GhostButton("Открыть точку доступа", icon = ArcadeIcons.Wifi, onClick = onOpenHotspot)
         }
 
         Spacer(Modifier.height(18.dp))

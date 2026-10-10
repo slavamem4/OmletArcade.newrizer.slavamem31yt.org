@@ -22,6 +22,9 @@ import java.security.SecureRandom
  * Render service is contacted for two things only - a LiveKit grant, and the
  * email confirmation code - because both need secrets the phone must not hold.
  */
+/** A session without a heartbeat for this long is treated as finished. */
+private const val STALE_AFTER_MS = 120_000L
+
 object ArcadeRepository {
 
     private const val ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -249,6 +252,7 @@ object ArcadeRepository {
                 "maxParticipants" to maxParticipants,
                 "e2ee" to encrypted,
                 "createdAt" to ServerValue.TIMESTAMP,
+                "lastSeen" to ServerValue.TIMESTAMP,
             ),
         ).await()
 
@@ -278,11 +282,12 @@ object ArcadeRepository {
                     "e2ee" to false,
                     "voiceEnabled" to create.voiceEnabled,
                     "createdAt" to ServerValue.TIMESTAMP,
+                    "lastSeen" to ServerValue.TIMESTAMP,
                 ),
             ).await()
         }
         advanceMission("first_stream")
-        return RoomHandle(roomId, create.title.trim(), isOwner = true, encrypted = !public)
+        return RoomHandle(roomId, create.title.trim(), isOwner = true, encrypted = !public, listed = public)
     }
 
     suspend fun createVoiceRoom(title: String, maxParticipants: Int): RoomHandle {
@@ -295,13 +300,14 @@ object ArcadeRepository {
                 "title" to title.trim(),
                 "maxParticipants" to maxParticipants,
                 "createdAt" to ServerValue.TIMESTAMP,
+                "lastSeen" to ServerValue.TIMESTAMP,
             ),
         ).await()
         advanceMission("voice")
-        return RoomHandle(roomId, title.trim(), isOwner = true, encrypted = true)
+        return RoomHandle(roomId, title.trim(), isOwner = true, encrypted = true, listed = true)
     }
 
-    suspend fun hostMinecraft(create: McSessionCreate, lanAddress: String?): RoomHandle {
+    suspend fun hostMinecraft(create: McSessionCreate): RoomHandle {
         val roomId = newRoomId("mc")
         createRoom(roomId, "mc", create.name, create.maxPlayers, encrypted = true)
 
@@ -320,11 +326,9 @@ object ArcadeRepository {
                     "players" to 1,
                     "maxPlayers" to create.maxPlayers,
                     "createdAt" to ServerValue.TIMESTAMP,
+                    "lastSeen" to ServerValue.TIMESTAMP,
                 ),
             ).await()
-        }
-        if (lanAddress != null) {
-            runCatching { db.getReference("rooms/$roomId/lan").setValue(lanAddress).await() }
         }
         advanceMission("host")
         return RoomHandle(
@@ -333,7 +337,7 @@ object ArcadeRepository {
             isOwner = true,
             encrypted = true,
             joinCode = code,
-            lanAddress = lanAddress,
+            listed = !create.isPrivate,
         )
     }
 
@@ -346,12 +350,20 @@ object ArcadeRepository {
 
         // Membership exists now, so the room record is readable.
         val room = db.getReference("rooms/$roomId").get().await()
+        require(room.child("state").getValue(String::class.java) == "live") {
+            "Сессия уже завершена"
+        }
+        // A host that stopped beating is gone: its app was killed or the
+        // network died, and nothing else will ever mark the room ended.
+        val seen = room.child("lastSeen").getValue(Long::class.java) ?: 0L
+        require(System.currentTimeMillis() - seen < STALE_AFTER_MS) {
+            "Хост не в сети — сессия закрыта"
+        }
         return RoomHandle(
             roomId = roomId,
             title = room.child("title").getValue(String::class.java) ?: fallbackTitle,
             isOwner = room.child("ownerUid").getValue(String::class.java) == uid,
             encrypted = room.child("e2ee").getValue(Boolean::class.java) ?: false,
-            lanAddress = room.child("lan").getValue(String::class.java),
         )
     }
 
@@ -381,7 +393,11 @@ object ArcadeRepository {
     suspend fun streams(): List<Stream> =
         db.getReference("listings/stream").orderByChild("createdAt").limitToLast(30).get().await()
             .children.mapNotNull { child ->
-                val id = child.key ?: return@mapNotNull null
+val id = child.key ?: return@mapNotNull null
+                val seen = child.child("lastSeen").getValue(Long::class.java) ?: 0L
+                // Sessions from crashed or outdated hosts carry no heartbeat;
+                // after two quiet minutes they are gone from every list.
+                if (System.currentTimeMillis() - seen > STALE_AFTER_MS) return@mapNotNull null
                 Stream(
                     id = id,
                     title = child.child("title").getValue(String::class.java) ?: return@mapNotNull null,
@@ -398,7 +414,11 @@ object ArcadeRepository {
     suspend fun voiceRooms(): List<VoiceRoom> =
         db.getReference("listings/voice").orderByChild("createdAt").limitToLast(30).get().await()
             .children.mapNotNull { child ->
-                val id = child.key ?: return@mapNotNull null
+val id = child.key ?: return@mapNotNull null
+                val seen = child.child("lastSeen").getValue(Long::class.java) ?: 0L
+                // Sessions from crashed or outdated hosts carry no heartbeat;
+                // after two quiet minutes they are gone from every list.
+                if (System.currentTimeMillis() - seen > STALE_AFTER_MS) return@mapNotNull null
                 VoiceRoom(
                     id = id,
                     title = child.child("title").getValue(String::class.java) ?: return@mapNotNull null,
@@ -412,7 +432,11 @@ object ArcadeRepository {
     suspend fun mcSessions(): List<McSession> =
         db.getReference("listings/mc").orderByChild("createdAt").limitToLast(30).get().await()
             .children.mapNotNull { child ->
-                val id = child.key ?: return@mapNotNull null
+val id = child.key ?: return@mapNotNull null
+                val seen = child.child("lastSeen").getValue(Long::class.java) ?: 0L
+                // Sessions from crashed or outdated hosts carry no heartbeat;
+                // after two quiet minutes they are gone from every list.
+                if (System.currentTimeMillis() - seen > STALE_AFTER_MS) return@mapNotNull null
                 McSession(
                     id = id,
                     name = child.child("title").getValue(String::class.java) ?: return@mapNotNull null,
@@ -426,6 +450,15 @@ object ArcadeRepository {
                     startedAt = child.child("createdAt").getValue(Long::class.java) ?: 0L,
                 )
             }.sortedByDescending { it.startedAt }
+
+    /** Owner only: proves the session is still alive, in the room and its listing. */
+    suspend fun heartbeat(roomId: String, listed: Boolean) {
+        val updates = mutableMapOf<String, Any>("rooms/$roomId/lastSeen" to ServerValue.TIMESTAMP)
+        if (listed) {
+            updates["listings/${roomId.substringBefore('_')}/$roomId/lastSeen"] = ServerValue.TIMESTAMP
+        }
+        db.reference.updateChildren(updates).await()
+    }
 
     // ---- ending a session --------------------------------------------------
 
